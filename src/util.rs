@@ -24,7 +24,10 @@ where
     header
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(
+    not(target_arch = "wasm32"),
+    all(target_os = "wasi", feature = "multipart")
+))]
 pub(crate) fn fast_random() -> u64 {
     use std::cell::Cell;
     use std::collections::hash_map::RandomState;

@@ -1,20 +1,29 @@
 use http::header::USER_AGENT;
 use http::{HeaderMap, HeaderValue, Method};
+#[cfg(not(target_os = "wasi"))]
 use js_sys::{Promise, JSON};
 use std::convert::TryInto;
+#[cfg(target_os = "wasi")]
+use std::time::Duration;
 use std::{fmt, future::Future, sync::Arc};
+#[cfg(not(target_os = "wasi"))]
 use url::Url;
+#[cfg(not(target_os = "wasi"))]
 use wasm_bindgen::prelude::{wasm_bindgen, UnwrapThrowExt as _};
 
-use super::{AbortGuard, Request, RequestBuilder, Response};
+#[cfg(not(target_os = "wasi"))]
+use super::AbortGuard;
+use super::{Request, RequestBuilder, Response};
 use crate::IntoUrl;
 
+#[cfg(not(target_os = "wasi"))]
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_name = fetch)]
     fn fetch_with_request(input: &web_sys::Request) -> Promise;
 }
 
+#[cfg(not(target_os = "wasi"))]
 fn js_fetch(req: &web_sys::Request) -> Promise {
     use wasm_bindgen::{JsCast, JsValue};
     let global = js_sys::global();
@@ -48,7 +57,10 @@ pub struct ClientBuilder {
 impl Client {
     /// Constructs a new `Client`.
     pub fn new() -> Self {
-        Client::builder().build().unwrap_throw()
+        #[cfg(not(target_os = "wasi"))]
+        return Client::builder().build().unwrap_throw();
+        #[cfg(target_os = "wasi")]
+        return Client::builder().build().expect("Client::new()");
     }
 
     /// Creates a `ClientBuilder` to configure a `Client`.
@@ -162,7 +174,14 @@ impl Client {
         mut req: Request,
     ) -> impl Future<Output = crate::Result<Response>> {
         self.merge_headers(&mut req);
-        fetch(req)
+        #[cfg(target_os = "wasi")]
+        if req.timeout().is_none() {
+            *req.timeout_mut() = self.config.timeout;
+        }
+        #[cfg(not(target_os = "wasi"))]
+        return fetch(req);
+        #[cfg(target_os = "wasi")]
+        return super::wasi::fetch(req);
     }
 }
 
@@ -192,6 +211,7 @@ impl fmt::Debug for ClientBuilder {
 // > `init.method(m)` to `init.set_method(m)`
 // For now, ignore their deprecation.
 #[allow(deprecated)]
+#[cfg(not(target_os = "wasi"))]
 async fn fetch(req: Request) -> crate::Result<Response> {
     // Build the js Request
     let mut init = web_sys::RequestInit::new();
@@ -328,6 +348,14 @@ impl ClientBuilder {
         }
         self
     }
+
+    /// Enables a total request timeout, for requests that set none of their
+    /// own: from sending the request to the end of the response body.
+    #[cfg(target_os = "wasi")]
+    pub fn timeout(mut self, timeout: Duration) -> ClientBuilder {
+        self.config.timeout = Some(timeout);
+        self
+    }
 }
 
 impl Default for ClientBuilder {
@@ -340,6 +368,8 @@ impl Default for ClientBuilder {
 struct Config {
     headers: HeaderMap,
     error: Option<crate::Error>,
+    #[cfg(target_os = "wasi")]
+    timeout: Option<Duration>,
 }
 
 impl Default for Config {
@@ -347,6 +377,8 @@ impl Default for Config {
         Config {
             headers: HeaderMap::new(),
             error: None,
+            #[cfg(target_os = "wasi")]
+            timeout: None,
         }
     }
 }
@@ -357,7 +389,7 @@ impl Config {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "wasi")))]
 mod tests {
     use wasm_bindgen_test::*;
 
